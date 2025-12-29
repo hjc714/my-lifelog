@@ -37,9 +37,10 @@ import {
   Filter,
   CheckCircle2,
   Circle,
-  Edit2,  // 新增圖示
-  Check,  // 新增圖示
-  X       // 新增圖示
+  Edit2,
+  Check,
+  X,
+  Menu // 新增 Menu 圖示
 } from 'lucide-react';
 
 // --- Firebase Initialization ---
@@ -150,7 +151,10 @@ export default function App() {
   const [filterStatus, setFilterStatus] = useState('all'); // 'all', 'completed', 'pending'
   const [expandedCats, setExpandedCats] = useState({}); // Track expanded categories
   
-  // Category Editing State (New Feature)
+  // Mobile UI State
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // Category Editing State
   const [editingCatId, setEditingCatId] = useState(null);
   const [tempCatName, setTempCatName] = useState('');
 
@@ -221,7 +225,6 @@ export default function App() {
     const catQuery = query(collection(db, 'artifacts', appId, 'users', user.uid, 'categories'));
     const unsubCat = onSnapshot(catQuery, (snapshot) => {
       const cats = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      // Sort categories to ensure consistent order (optional, could add order field)
       cats.sort((a, b) => a.name.localeCompare(b.name));
       setCategories(cats);
     }, (error) => console.error("Cat sync error", error));
@@ -246,11 +249,9 @@ export default function App() {
     const settingsRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'security');
 
     if (authStatus === 'setup') {
-      // Create new PIN
       await setDoc(settingsRef, { pin: pinInput, createdAt: serverTimestamp() });
       setAuthStatus('authenticated');
     } else if (authStatus === 'lock') {
-      // Verify PIN
       const docSnap = await getDoc(settingsRef);
       if (docSnap.exists() && docSnap.data().pin === pinInput) {
         setAuthStatus('authenticated');
@@ -266,13 +267,12 @@ export default function App() {
     e.preventDefault();
     if (!newCatName.trim()) return;
     
-    const docRef = await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'categories'), {
+    await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'categories'), {
       name: newCatName,
       parentId: parentCatId || null,
       createdAt: serverTimestamp()
     });
     
-    // Auto-expand the parent category if we added a child
     if (parentCatId) {
         setExpandedCats(prev => ({ ...prev, [parentCatId]: true }));
     }
@@ -372,7 +372,6 @@ export default function App() {
 
   // --- Helpers ---
 
-  // Toggle Category Expansion
   const toggleCategory = (e, catId) => {
     e.stopPropagation();
     setExpandedCats(prev => ({
@@ -381,7 +380,6 @@ export default function App() {
     }));
   };
 
-  // Recursive Category Renderer (File Explorer Style)
   const renderCategories = (parentId = null) => {
     const currentCats = categories.filter(c => c.parentId === parentId);
     
@@ -399,10 +397,15 @@ export default function App() {
             <li key={cat.id} className="select-none">
               <div 
                 className={`group flex items-center justify-between p-1.5 rounded-md cursor-pointer transition-colors border border-transparent ${isSelected && !isEditing ? 'bg-blue-100 text-blue-700 border-blue-200' : 'hover:bg-slate-100 text-slate-700'}`}
-                onClick={() => { if(!isEditing) setSelectedCategoryId(cat.id); }}
+                onClick={() => { 
+                    if(!isEditing) {
+                        setSelectedCategoryId(cat.id);
+                        // On mobile, auto-close menu when selecting a category
+                        if (window.innerWidth < 768) setIsMobileMenuOpen(false);
+                    }
+                }}
               >
                 <div className="flex items-center gap-1 overflow-hidden flex-1 min-w-0">
-                  {/* Expand/Collapse Icon */}
                   <button 
                     onClick={(e) => toggleCategory(e, cat.id)}
                     className={`p-0.5 rounded hover:bg-black/5 text-slate-400 flex-shrink-0 transition-transform ${hasChildren ? '' : 'invisible'}`}
@@ -410,14 +413,12 @@ export default function App() {
                     {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                   </button>
 
-                  {/* Folder Icon */}
                   {isExpanded ? (
                     <FolderOpen className={`w-4 h-4 flex-shrink-0 ${isSelected ? 'fill-blue-300 text-blue-600' : 'text-yellow-500 fill-yellow-100'}`} />
                   ) : (
                     <Folder className={`w-4 h-4 flex-shrink-0 ${isSelected ? 'fill-blue-300 text-blue-600' : 'text-yellow-500 fill-yellow-100'}`} />
                   )}
                   
-                  {/* Name or Edit Input */}
                   {isEditing ? (
                       <form 
                         onSubmit={(e) => saveCategoryName(e, cat.id)} 
@@ -444,13 +445,11 @@ export default function App() {
                   )}
                 </div>
 
-                {/* Hover Actions (Only show when not editing) */}
                 {!isEditing && (
                     <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
                       <button 
                         onClick={(e) => startEditingCategory(e, cat)}
                         className="p-1 hover:bg-slate-200 text-slate-500 rounded mr-0.5"
-                        title="更名"
                       >
                         <Edit2 className="w-3 h-3" />
                       </button>
@@ -462,14 +461,12 @@ export default function App() {
                             setExpandedCats(prev => ({ ...prev, [cat.id]: true }));
                         }}
                         className="p-1 hover:bg-blue-200 text-blue-600 rounded mr-0.5"
-                        title="新增子類別"
                       >
                         <Plus className="w-3 h-3" />
                       </button>
                       <button 
                         onClick={(e) => deleteCategory(cat.id, e)}
                         className="p-1 hover:bg-red-100 text-red-500 rounded"
-                        title="刪除"
                       >
                         <Trash2 className="w-3 h-3" />
                       </button>
@@ -477,7 +474,6 @@ export default function App() {
                 )}
               </div>
 
-              {/* Recursive Children with Indentation Line */}
               {hasChildren && isExpanded && (
                 <div className="ml-[1.1rem] border-l border-slate-200 pl-1 mt-0.5 mb-1">
                   {renderCategories(cat.id)}
@@ -490,7 +486,6 @@ export default function App() {
     );
   };
 
-  // Filter Logic
   const filteredCards = useMemo(() => {
     return cards.filter(card => {
       const matchSearch = card.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -520,7 +515,6 @@ export default function App() {
     });
   }, [cards, searchQuery, selectedCategoryId, filterType, filterStatus, categories]);
 
-  // Video ID Extractor
   const getYoutubeEmbed = (url) => {
     if (!url) return '';
     const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
@@ -539,23 +533,37 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen w-full bg-slate-50 overflow-hidden text-slate-900 font-sans">
+    <div className="flex h-screen w-full bg-slate-50 overflow-hidden text-slate-900 font-sans relative">
       
-      {/* Sidebar */}
-      <aside className="w-72 bg-white border-r border-slate-200 flex flex-col flex-shrink-0 shadow-[2px_0_10px_rgba(0,0,0,0.02)]">
-        <div className="p-4 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
+      {/* Mobile Sidebar Overlay */}
+      {isMobileMenuOpen && (
+        <div 
+            className="fixed inset-0 bg-black/50 z-30 md:hidden animate-in fade-in duration-200"
+            onClick={() => setIsMobileMenuOpen(false)}
+        />
+      )}
+
+      {/* Sidebar - Responsive */}
+      <aside className={`
+        fixed inset-y-0 left-0 z-40 w-72 bg-white border-r border-slate-200 flex flex-col shadow-xl transition-transform duration-300 ease-in-out md:relative md:translate-x-0 md:shadow-[2px_0_10px_rgba(0,0,0,0.02)]
+        ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
+      `}>
+        <div className="p-4 border-b border-slate-200 flex items-center justify-between bg-slate-50/50 h-16">
           <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
             My LifeLog
           </h1>
           <button onClick={() => { setAuthStatus('lock'); }} title="鎖定並登出" className="hover:bg-slate-200 p-1.5 rounded-full transition-colors">
-            <LogOut className="w-4 h-4 text-slate-500" />
+            <LogOut className="w-5 h-5 text-slate-500" />
           </button>
         </div>
         
         <div className="flex-1 overflow-y-auto p-3 custom-scrollbar">
           <div 
             className={`flex items-center gap-2 p-2 rounded-lg cursor-pointer mb-3 font-semibold transition-colors ${!selectedCategoryId ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200' : 'text-slate-600 hover:bg-slate-100'}`}
-            onClick={() => setSelectedCategoryId(null)}
+            onClick={() => {
+                setSelectedCategoryId(null);
+                if (window.innerWidth < 768) setIsMobileMenuOpen(false);
+            }}
           >
             <FolderPlus className="w-5 h-5" />
             <span>所有筆記</span>
@@ -585,13 +593,21 @@ export default function App() {
       <main className="flex-1 flex flex-col min-w-0 bg-slate-50/50">
         
         {/* Top Bar */}
-        <header className="h-16 bg-white border-b border-slate-200 flex items-center px-6 justify-between gap-4 sticky top-0 z-10">
+        <header className="h-16 bg-white border-b border-slate-200 flex items-center px-4 md:px-6 justify-between gap-3 sticky top-0 z-10">
+          {/* Mobile Menu Button */}
+          <button 
+            className="md:hidden p-2 -ml-2 text-slate-500 hover:bg-slate-100 rounded-lg"
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+          >
+            <Menu className="w-6 h-6" />
+          </button>
+
           <div className="flex items-center gap-3 flex-1 max-w-2xl bg-slate-100 px-4 py-2 rounded-full focus-within:ring-2 ring-blue-500/20 transition-all focus-within:bg-white border border-transparent focus-within:border-blue-200">
-            <Search className="w-5 h-5 text-slate-400" />
+            <Search className="w-5 h-5 text-slate-400 flex-shrink-0" />
             <input 
               type="text" 
-              placeholder="搜尋任務、卡片內容..." 
-              className="bg-transparent border-none outline-none w-full text-slate-700 placeholder-slate-400"
+              placeholder="搜尋..." 
+              className="bg-transparent border-none outline-none w-full text-slate-700 placeholder-slate-400 min-w-0"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -599,7 +615,7 @@ export default function App() {
 
           <button 
             onClick={() => setIsAddCardOpen(true)}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-full font-medium shadow-lg shadow-blue-200 transition-all active:scale-95 hover:-translate-y-0.5"
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 md:px-5 py-2 md:py-2.5 rounded-full font-medium shadow-lg shadow-blue-200 transition-all active:scale-95 hover:-translate-y-0.5 flex-shrink-0"
           >
             <Plus className="w-5 h-5" />
             <span className="hidden sm:inline">新增卡片</span>
@@ -607,10 +623,10 @@ export default function App() {
         </header>
 
         {/* Filters */}
-        <div className="px-8 py-6 flex flex-wrap items-center gap-3">
+        <div className="px-4 md:px-8 py-4 md:py-6 flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm text-sm hover:border-blue-300 transition-colors">
                 <Filter className="w-4 h-4 text-slate-500" />
-                <span className="text-slate-500">狀態:</span>
+                <span className="text-slate-500 hidden sm:inline">狀態:</span>
                 <select 
                     value={filterStatus}
                     onChange={(e) => setFilterStatus(e.target.value)}
@@ -623,7 +639,7 @@ export default function App() {
             </div>
             
             <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm text-sm hover:border-blue-300 transition-colors">
-                <span className="text-slate-500">類型:</span>
+                <span className="text-slate-500 hidden sm:inline">類型:</span>
                 <select 
                     value={filterType}
                     onChange={(e) => setFilterType(e.target.value)}
@@ -639,8 +655,8 @@ export default function App() {
         </div>
 
         {/* Card Grid */}
-        <div className="flex-1 overflow-y-auto px-8 pb-8 custom-scrollbar">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        <div className="flex-1 overflow-y-auto px-4 md:px-8 pb-8 custom-scrollbar">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
             {filteredCards.map(card => (
               <div 
                 key={card.id} 
@@ -669,8 +685,8 @@ export default function App() {
                 </div>
 
                 {/* Card Content */}
-                <div className="p-5 flex-1 flex flex-col gap-3">
-                    <h3 className={`font-bold text-lg leading-snug ${card.isCompleted ? 'line-through text-slate-500' : 'text-slate-800'}`}>
+                <div className="p-4 md:p-5 flex-1 flex flex-col gap-3">
+                    <h3 className={`font-bold text-lg leading-snug break-words ${card.isCompleted ? 'line-through text-slate-500' : 'text-slate-800'}`}>
                         {card.title}
                     </h3>
 
@@ -680,7 +696,7 @@ export default function App() {
                             {card.imageUrl && (
                                 <img src={card.imageUrl} alt="card attachment" className="w-full h-36 object-cover rounded-lg mb-2 bg-slate-100 border border-slate-100" />
                             )}
-                            <p className="text-sm text-slate-600 whitespace-pre-wrap leading-relaxed">{card.content}</p>
+                            <p className="text-sm text-slate-600 whitespace-pre-wrap leading-relaxed break-words">{card.content}</p>
                         </>
                     )}
 
@@ -691,7 +707,7 @@ export default function App() {
                                 <Calendar className="w-4 h-4" />
                                 {card.date ? new Date(card.date).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute:'2-digit' }) : '未設定時間'}
                              </div>
-                             <p className="text-sm text-slate-600">{card.content}</p>
+                             <p className="text-sm text-slate-600 break-words">{card.content}</p>
                         </div>
                     )}
 
@@ -709,7 +725,7 @@ export default function App() {
                             ) : (
                                 <div className="w-full h-full flex flex-col gap-2 items-center justify-center text-white text-xs p-4 text-center">
                                    <Video className="w-8 h-8 opacity-50" />
-                                   <a href={card.videoUrl} target="_blank" className="underline hover:text-blue-300">無法預覽，點擊開啟連結</a>
+                                   <a href={card.videoUrl} target="_blank" className="underline hover:text-blue-300 break-all">無法預覽，點擊開啟連結</a>
                                 </div>
                             )}
                         </div>
@@ -721,7 +737,7 @@ export default function App() {
                             {card.todoItems && card.todoItems.map((item, idx) => (
                                 <li key={idx} className="flex items-start gap-2.5 text-sm text-slate-700">
                                     <div className="mt-1 w-3.5 h-3.5 rounded border border-slate-400 flex-shrink-0"></div>
-                                    <span className="leading-relaxed">{item.text}</span>
+                                    <span className="leading-relaxed break-words">{item.text}</span>
                                 </li>
                             ))}
                         </ul>
@@ -747,8 +763,8 @@ export default function App() {
       
       {/* Add Category Modal */}
       {isAddCatOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200">
-          <div className="bg-white rounded-xl p-6 w-96 shadow-2xl scale-100 transform transition-all">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200 p-4">
+          <div className="bg-white rounded-xl p-6 w-full max-w-[90vw] md:w-96 shadow-2xl scale-100 transform transition-all">
             <h3 className="text-lg font-bold mb-4 text-slate-800 flex items-center gap-2">
                 <FolderPlus className="w-5 h-5 text-blue-600" />
                 {parentCatId ? '新增子類別' : '新增主類別'}
@@ -774,7 +790,7 @@ export default function App() {
       {/* Add Card Modal */}
       {isAddCardOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-[95vw] md:max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto">
             <h3 className="text-xl font-bold mb-6 text-slate-800 flex items-center gap-2">
                 <Plus className="w-6 h-6 text-blue-600 bg-blue-50 rounded-full p-1" />
                 新增任務卡片
