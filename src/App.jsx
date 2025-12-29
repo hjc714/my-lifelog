@@ -36,7 +36,10 @@ import {
   LogOut,
   Filter,
   CheckCircle2,
-  Circle
+  Circle,
+  Edit2,  // 新增圖示
+  Check,  // 新增圖示
+  X       // 新增圖示
 } from 'lucide-react';
 
 // --- Firebase Initialization ---
@@ -147,6 +150,10 @@ export default function App() {
   const [filterStatus, setFilterStatus] = useState('all'); // 'all', 'completed', 'pending'
   const [expandedCats, setExpandedCats] = useState({}); // Track expanded categories
   
+  // Category Editing State (New Feature)
+  const [editingCatId, setEditingCatId] = useState(null);
+  const [tempCatName, setTempCatName] = useState('');
+
   // Modal States
   const [isAddCardOpen, setIsAddCardOpen] = useState(false);
   const [newCardType, setNewCardType] = useState('text');
@@ -282,6 +289,43 @@ export default function App() {
     }
   };
 
+  // Rename Category Logic
+  const startEditingCategory = (e, cat) => {
+    e.stopPropagation();
+    setEditingCatId(cat.id);
+    setTempCatName(cat.name);
+  };
+
+  const cancelEditingCategory = (e) => {
+    if(e) e.stopPropagation();
+    setEditingCatId(null);
+    setTempCatName('');
+  };
+
+  const saveCategoryName = async (e, catId) => {
+    if(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    
+    if (!tempCatName.trim()) {
+        cancelEditingCategory();
+        return;
+    }
+
+    try {
+        await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'categories', catId), {
+            name: tempCatName.trim()
+        });
+    } catch (err) {
+        console.error("Error renaming category:", err);
+        alert("更名失敗");
+    }
+    
+    setEditingCatId(null);
+    setTempCatName('');
+  };
+
   const addCard = async (e) => {
     e.preventDefault();
     const payload = {
@@ -349,12 +393,13 @@ export default function App() {
           const hasChildren = categories.some(c => c.parentId === cat.id);
           const isExpanded = expandedCats[cat.id];
           const isSelected = selectedCategoryId === cat.id;
+          const isEditing = editingCatId === cat.id;
 
           return (
             <li key={cat.id} className="select-none">
               <div 
-                className={`group flex items-center justify-between p-1.5 rounded-md cursor-pointer transition-colors border border-transparent ${isSelected ? 'bg-blue-100 text-blue-700 border-blue-200' : 'hover:bg-slate-100 text-slate-700'}`}
-                onClick={() => setSelectedCategoryId(cat.id)}
+                className={`group flex items-center justify-between p-1.5 rounded-md cursor-pointer transition-colors border border-transparent ${isSelected && !isEditing ? 'bg-blue-100 text-blue-700 border-blue-200' : 'hover:bg-slate-100 text-slate-700'}`}
+                onClick={() => { if(!isEditing) setSelectedCategoryId(cat.id); }}
               >
                 <div className="flex items-center gap-1 overflow-hidden flex-1 min-w-0">
                   {/* Expand/Collapse Icon */}
@@ -372,32 +417,64 @@ export default function App() {
                     <Folder className={`w-4 h-4 flex-shrink-0 ${isSelected ? 'fill-blue-300 text-blue-600' : 'text-yellow-500 fill-yellow-100'}`} />
                   )}
                   
-                  <span className="truncate text-sm font-medium ml-1">{cat.name}</span>
+                  {/* Name or Edit Input */}
+                  {isEditing ? (
+                      <form 
+                        onSubmit={(e) => saveCategoryName(e, cat.id)} 
+                        className="flex-1 ml-1 flex items-center gap-1"
+                        onClick={e => e.stopPropagation()}
+                      >
+                          <input 
+                            autoFocus
+                            type="text" 
+                            value={tempCatName}
+                            onChange={(e) => setTempCatName(e.target.value)}
+                            onKeyDown={(e) => { if(e.key === 'Escape') cancelEditingCategory(e); }}
+                            className="w-full text-sm px-1.5 py-0.5 border border-blue-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-200"
+                          />
+                          <button type="submit" className="p-0.5 text-green-600 hover:bg-green-100 rounded">
+                              <Check className="w-3.5 h-3.5" />
+                          </button>
+                          <button type="button" onClick={cancelEditingCategory} className="p-0.5 text-red-500 hover:bg-red-100 rounded">
+                              <X className="w-3.5 h-3.5" />
+                          </button>
+                      </form>
+                  ) : (
+                      <span className="truncate text-sm font-medium ml-1">{cat.name}</span>
+                  )}
                 </div>
 
-                {/* Hover Actions */}
-                <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button 
-                    onClick={(e) => { 
-                        e.stopPropagation(); 
-                        setParentCatId(cat.id); 
-                        setIsAddCatOpen(true); 
-                        // Ensure parent is expanded when adding child
-                        setExpandedCats(prev => ({ ...prev, [cat.id]: true }));
-                    }}
-                    className="p-1 hover:bg-blue-200 text-blue-600 rounded mr-1"
-                    title="新增子類別"
-                  >
-                    <Plus className="w-3 h-3" />
-                  </button>
-                  <button 
-                    onClick={(e) => deleteCategory(cat.id, e)}
-                    className="p-1 hover:bg-red-100 text-red-500 rounded"
-                    title="刪除"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                </div>
+                {/* Hover Actions (Only show when not editing) */}
+                {!isEditing && (
+                    <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button 
+                        onClick={(e) => startEditingCategory(e, cat)}
+                        className="p-1 hover:bg-slate-200 text-slate-500 rounded mr-0.5"
+                        title="更名"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                      </button>
+                      <button 
+                        onClick={(e) => { 
+                            e.stopPropagation(); 
+                            setParentCatId(cat.id); 
+                            setIsAddCatOpen(true); 
+                            setExpandedCats(prev => ({ ...prev, [cat.id]: true }));
+                        }}
+                        className="p-1 hover:bg-blue-200 text-blue-600 rounded mr-0.5"
+                        title="新增子類別"
+                      >
+                        <Plus className="w-3 h-3" />
+                      </button>
+                      <button 
+                        onClick={(e) => deleteCategory(cat.id, e)}
+                        className="p-1 hover:bg-red-100 text-red-500 rounded"
+                        title="刪除"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                )}
               </div>
 
               {/* Recursive Children with Indentation Line */}
@@ -419,10 +496,6 @@ export default function App() {
       const matchSearch = card.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
                           (card.content && card.content.toLowerCase().includes(searchQuery.toLowerCase()));
       
-      // Filter by category: match exact category OR if a parent category is selected, maybe we want to show all children?
-      // For now, let's keep it simple: match exact category ID.
-      // If you want to show cards from subcategories too, we'd need a recursive check here.
-      // Let's implement recursive category checking for better UX.
       let matchCat = true;
       if (selectedCategoryId) {
           const getDescendantIds = (parentId) => {
