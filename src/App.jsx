@@ -40,7 +40,7 @@ import {
   Edit2,
   Check,
   X,
-  Menu // 新增 Menu 圖示
+  Menu
 } from 'lucide-react';
 
 // --- Firebase Initialization ---
@@ -54,6 +54,10 @@ const firebaseConfig = {
   measurementId: "G-30SSP7BHLW"
 };
 const appId = "my-local-app"; // 自訂一個 ID 即可
+
+// ★★★ 單人模式設定 ★★★
+// 定義一個固定的 ID，讓所有裝置都讀取同一份資料
+const SHARED_ID = 'owner';
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -196,12 +200,14 @@ export default function App() {
   }, []);
 
   // Check PIN Status in Firestore
+  // 修正：現在檢查 SHARED_ID 的設定，而不是 user.uid
   useEffect(() => {
     if (!user) return;
 
     const checkPinSettings = async () => {
       try {
-        const settingsRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'security');
+        // 使用 SHARED_ID 來存取共用的設定
+        const settingsRef = doc(db, 'artifacts', appId, 'users', SHARED_ID, 'settings', 'security');
         const docSnap = await getDoc(settingsRef);
 
         if (docSnap.exists()) {
@@ -218,19 +224,20 @@ export default function App() {
   }, [user]);
 
   // Fetch Data (Categories & Cards)
+  // 修正：使用 SHARED_ID 來讀取共用資料
   useEffect(() => {
     if (!user || authStatus !== 'authenticated') return;
 
-    // Categories Listener
-    const catQuery = query(collection(db, 'artifacts', appId, 'users', user.uid, 'categories'));
+    // Categories Listener - 使用 SHARED_ID
+    const catQuery = query(collection(db, 'artifacts', appId, 'users', SHARED_ID, 'categories'));
     const unsubCat = onSnapshot(catQuery, (snapshot) => {
       const cats = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       cats.sort((a, b) => a.name.localeCompare(b.name));
       setCategories(cats);
     }, (error) => console.error("Cat sync error", error));
 
-    // Cards Listener
-    const cardQuery = query(collection(db, 'artifacts', appId, 'users', user.uid, 'cards'));
+    // Cards Listener - 使用 SHARED_ID
+    const cardQuery = query(collection(db, 'artifacts', appId, 'users', SHARED_ID, 'cards'));
     const unsubCards = onSnapshot(cardQuery, (snapshot) => {
       const c = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setCards(c);
@@ -243,10 +250,11 @@ export default function App() {
   }, [user, authStatus]);
 
   // Handle PIN Logic
+  // 修正：使用 SHARED_ID 來存取/驗證 PIN
   const handlePinSubmit = async (pinInput) => {
     if (!user) return;
 
-    const settingsRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'security');
+    const settingsRef = doc(db, 'artifacts', appId, 'users', SHARED_ID, 'settings', 'security');
 
     if (authStatus === 'setup') {
       await setDoc(settingsRef, { pin: pinInput, createdAt: serverTimestamp() });
@@ -267,7 +275,8 @@ export default function App() {
     e.preventDefault();
     if (!newCatName.trim()) return;
     
-    await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'categories'), {
+    // 使用 SHARED_ID
+    await addDoc(collection(db, 'artifacts', appId, 'users', SHARED_ID, 'categories'), {
       name: newCatName,
       parentId: parentCatId || null,
       createdAt: serverTimestamp()
@@ -285,11 +294,11 @@ export default function App() {
   const deleteCategory = async (catId, e) => {
     e.stopPropagation();
     if (confirm('確定刪除此類別？(這不會刪除類別內的卡片，但會刪除子類別的連結)')) {
-      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'categories', catId));
+      // 使用 SHARED_ID
+      await deleteDoc(doc(db, 'artifacts', appId, 'users', SHARED_ID, 'categories', catId));
     }
   };
 
-  // Rename Category Logic
   const startEditingCategory = (e, cat) => {
     e.stopPropagation();
     setEditingCatId(cat.id);
@@ -314,7 +323,8 @@ export default function App() {
     }
 
     try {
-        await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'categories', catId), {
+        // 使用 SHARED_ID
+        await updateDoc(doc(db, 'artifacts', appId, 'users', SHARED_ID, 'categories', catId), {
             name: tempCatName.trim()
         });
     } catch (err) {
@@ -342,20 +352,23 @@ export default function App() {
     if (newCardType !== 'video') delete payload.videoUrl;
     if (newCardType !== 'todo') delete payload.todoItems;
 
-    await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'cards'), payload);
+    // 使用 SHARED_ID
+    await addDoc(collection(db, 'artifacts', appId, 'users', SHARED_ID, 'cards'), payload);
     setIsAddCardOpen(false);
     resetCardForm();
   };
 
   const toggleCardCompletion = async (card) => {
-    await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'cards', card.id), {
+    // 使用 SHARED_ID
+    await updateDoc(doc(db, 'artifacts', appId, 'users', SHARED_ID, 'cards', card.id), {
       isCompleted: !card.isCompleted
     });
   };
 
   const deleteCard = async (cardId) => {
     if (confirm('確定刪除此卡片？')) {
-      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'cards', cardId));
+      // 使用 SHARED_ID
+      await deleteDoc(doc(db, 'artifacts', appId, 'users', SHARED_ID, 'cards', cardId));
     }
   };
 
@@ -400,7 +413,6 @@ export default function App() {
                 onClick={() => { 
                     if(!isEditing) {
                         setSelectedCategoryId(cat.id);
-                        // On mobile, auto-close menu when selecting a category
                         if (window.innerWidth < 768) setIsMobileMenuOpen(false);
                     }
                 }}
