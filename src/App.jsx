@@ -40,7 +40,9 @@ import {
   Edit2,
   Check,
   X,
-  Menu
+  Menu,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 
 // --- Firebase Initialization ---
@@ -163,10 +165,11 @@ export default function App() {
   const [tempCatName, setTempCatName] = useState('');
 
   // Modal States
-  const [isAddCardOpen, setIsAddCardOpen] = useState(false);
+  const [isCardModalOpen, setIsCardModalOpen] = useState(false);
+  const [editingCard, setEditingCard] = useState(null); // 如果有值代表是編輯模式
   const [newCardType, setNewCardType] = useState('text');
   
-  // New Card Form Data
+  // Card Form Data
   const [cardForm, setCardForm] = useState({
     title: '',
     content: '',
@@ -199,14 +202,12 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Check PIN Status in Firestore
-  // 修正：現在檢查 SHARED_ID 的設定，而不是 user.uid
+  // Check PIN Status
   useEffect(() => {
     if (!user) return;
 
     const checkPinSettings = async () => {
       try {
-        // 使用 SHARED_ID 來存取共用的設定
         const settingsRef = doc(db, 'artifacts', appId, 'users', SHARED_ID, 'settings', 'security');
         const docSnap = await getDoc(settingsRef);
 
@@ -224,11 +225,9 @@ export default function App() {
   }, [user]);
 
   // Fetch Data (Categories & Cards)
-  // 修正：使用 SHARED_ID 來讀取共用資料
   useEffect(() => {
     if (!user || authStatus !== 'authenticated') return;
 
-    // Categories Listener - 使用 SHARED_ID
     const catQuery = query(collection(db, 'artifacts', appId, 'users', SHARED_ID, 'categories'));
     const unsubCat = onSnapshot(catQuery, (snapshot) => {
       const cats = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -236,10 +235,11 @@ export default function App() {
       setCategories(cats);
     }, (error) => console.error("Cat sync error", error));
 
-    // Cards Listener - 使用 SHARED_ID
     const cardQuery = query(collection(db, 'artifacts', appId, 'users', SHARED_ID, 'cards'));
     const unsubCards = onSnapshot(cardQuery, (snapshot) => {
       const c = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // Sort by creation time descending (newest first)
+      c.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       setCards(c);
     }, (error) => console.error("Card sync error", error));
 
@@ -250,7 +250,6 @@ export default function App() {
   }, [user, authStatus]);
 
   // Handle PIN Logic
-  // 修正：使用 SHARED_ID 來存取/驗證 PIN
   const handlePinSubmit = async (pinInput) => {
     if (!user) return;
 
@@ -275,7 +274,6 @@ export default function App() {
     e.preventDefault();
     if (!newCatName.trim()) return;
     
-    // 使用 SHARED_ID
     await addDoc(collection(db, 'artifacts', appId, 'users', SHARED_ID, 'categories'), {
       name: newCatName,
       parentId: parentCatId || null,
@@ -294,7 +292,6 @@ export default function App() {
   const deleteCategory = async (catId, e) => {
     e.stopPropagation();
     if (confirm('確定刪除此類別？(這不會刪除類別內的卡片，但會刪除子類別的連結)')) {
-      // 使用 SHARED_ID
       await deleteDoc(doc(db, 'artifacts', appId, 'users', SHARED_ID, 'categories', catId));
     }
   };
@@ -323,7 +320,6 @@ export default function App() {
     }
 
     try {
-        // 使用 SHARED_ID
         await updateDoc(doc(db, 'artifacts', appId, 'users', SHARED_ID, 'categories', catId), {
             name: tempCatName.trim()
         });
@@ -336,38 +332,97 @@ export default function App() {
     setTempCatName('');
   };
 
-  const addCard = async (e) => {
+  // Open Modal for Create
+  const openCreateCardModal = () => {
+      setEditingCard(null);
+      setNewCardType('text');
+      resetCardForm();
+      setIsCardModalOpen(true);
+  };
+
+  // Open Modal for Edit
+  const openEditCardModal = (card) => {
+      setEditingCard(card);
+      setNewCardType(card.type);
+      setCardForm({
+          title: card.title,
+          content: card.content || '',
+          imageUrl: card.imageUrl || '',
+          date: card.date || '',
+          videoUrl: card.videoUrl || '',
+          todoItems: card.todoItems || []
+      });
+      // Special handling: if todo, we show text content in textarea by joining items
+      // This allows easy bulk editing. We'll try to preserve checks on save.
+      if (card.type === 'todo' && card.todoItems) {
+          setCardForm(prev => ({
+              ...prev,
+              content: card.todoItems.map(i => i.text).join('\n')
+          }));
+      }
+      setIsCardModalOpen(true);
+  };
+
+  const handleSaveCard = async (e) => {
     e.preventDefault();
     const payload = {
       type: newCardType,
-      categoryId: selectedCategoryId,
+      categoryId: selectedCategoryId || (editingCard ? editingCard.categoryId : null), // Keep existing category if editing
       title: cardForm.title,
-      isCompleted: false,
-      createdAt: serverTimestamp(),
+      // Only set createdAt on create, not update
+      ...(editingCard ? {} : { createdAt: serverTimestamp(), isCompleted: false }),
       ...cardForm
     };
 
+    // Clean up fields
     if (newCardType !== 'text') delete payload.imageUrl;
     if (newCardType !== 'schedule') delete payload.date;
     if (newCardType !== 'video') delete payload.videoUrl;
-    if (newCardType !== 'todo') delete payload.todoItems;
+    if (newCardType !== 'todo') {
+        delete payload.todoItems;
+    } else {
+        // Parse todo content back to items
+        const newLines = cardForm.content.split('\n').filter(i => i.trim());
+        const newItems = newLines.map(text => {
+            // Try to find existing item to preserve 'done' status if editing
+            const existing = editingCard?.todoItems?.find(i => i.text === text);
+            return { text, done: existing ? existing.done : false };
+        });
+        payload.todoItems = newItems;
+        // Don't save raw content for todo, we use todoItems
+        delete payload.content; 
+    }
 
-    // 使用 SHARED_ID
-    await addDoc(collection(db, 'artifacts', appId, 'users', SHARED_ID, 'cards'), payload);
-    setIsAddCardOpen(false);
-    resetCardForm();
+    try {
+        if (editingCard) {
+            await updateDoc(doc(db, 'artifacts', appId, 'users', SHARED_ID, 'cards', editingCard.id), payload);
+        } else {
+            await addDoc(collection(db, 'artifacts', appId, 'users', SHARED_ID, 'cards'), payload);
+        }
+        setIsCardModalOpen(false);
+        resetCardForm();
+    } catch (err) {
+        console.error("Error saving card:", err);
+        alert("儲存失敗");
+    }
   };
 
   const toggleCardCompletion = async (card) => {
-    // 使用 SHARED_ID
     await updateDoc(doc(db, 'artifacts', appId, 'users', SHARED_ID, 'cards', card.id), {
       isCompleted: !card.isCompleted
     });
   };
 
+  const toggleTodoItem = async (card, idx) => {
+      const newItems = [...card.todoItems];
+      newItems[idx].done = !newItems[idx].done;
+      await updateDoc(doc(db, 'artifacts', appId, 'users', SHARED_ID, 'cards', card.id), {
+          todoItems: newItems
+      });
+  };
+
   const deleteCard = async (cardId) => {
     if (confirm('確定刪除此卡片？')) {
-      // 使用 SHARED_ID
       await deleteDoc(doc(db, 'artifacts', appId, 'users', SHARED_ID, 'cards', cardId));
     }
   };
@@ -626,7 +681,7 @@ export default function App() {
           </div>
 
           <button 
-            onClick={() => setIsAddCardOpen(true)}
+            onClick={openCreateCardModal}
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 md:px-5 py-2 md:py-2.5 rounded-full font-medium shadow-lg shadow-blue-200 transition-all active:scale-95 hover:-translate-y-0.5 flex-shrink-0"
           >
             <Plus className="w-5 h-5" />
@@ -690,6 +745,9 @@ export default function App() {
                         >
                             {card.isCompleted ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4" />}
                         </button>
+                        <button onClick={() => openEditCardModal(card)} className="text-slate-400 hover:text-blue-500 hover:bg-blue-50 p-1.5 rounded-md transition-colors">
+                            <Edit2 className="w-4 h-4" />
+                        </button>
                         <button onClick={() => deleteCard(card.id)} className="text-slate-400 hover:text-red-500 hover:bg-red-50 p-1.5 rounded-md transition-colors">
                             <Trash2 className="w-4 h-4" />
                         </button>
@@ -745,11 +803,17 @@ export default function App() {
 
                      {/* Type: Todo List */}
                      {card.type === 'todo' && (
-                        <ul className="space-y-2 mt-1">
+                        <ul className="space-y-1 mt-1">
                             {card.todoItems && card.todoItems.map((item, idx) => (
-                                <li key={idx} className="flex items-start gap-2.5 text-sm text-slate-700">
-                                    <div className="mt-1 w-3.5 h-3.5 rounded border border-slate-400 flex-shrink-0"></div>
-                                    <span className="leading-relaxed break-words">{item.text}</span>
+                                <li 
+                                    key={idx} 
+                                    className={`flex items-start gap-2.5 text-sm p-1.5 rounded-md hover:bg-slate-50 cursor-pointer transition-colors ${item.done ? 'text-slate-400' : 'text-slate-700'}`}
+                                    onClick={() => toggleTodoItem(card, idx)}
+                                >
+                                    <div className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-colors ${item.done ? 'bg-green-500 border-green-500' : 'border-slate-400 bg-white'}`}>
+                                        {item.done && <Check className="w-3 h-3 text-white" />}
+                                    </div>
+                                    <span className={`leading-relaxed break-words flex-1 ${item.done ? 'line-through decoration-slate-400' : ''}`}>{item.text}</span>
                                 </li>
                             ))}
                         </ul>
@@ -799,17 +863,26 @@ export default function App() {
         </div>
       )}
 
-      {/* Add Card Modal */}
-      {isAddCardOpen && (
+      {/* Add/Edit Card Modal */}
+      {isCardModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl p-6 w-full max-w-[95vw] md:max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto">
             <h3 className="text-xl font-bold mb-6 text-slate-800 flex items-center gap-2">
-                <Plus className="w-6 h-6 text-blue-600 bg-blue-50 rounded-full p-1" />
-                新增任務卡片
+                {editingCard ? (
+                    <>
+                        <Edit2 className="w-6 h-6 text-orange-600 bg-orange-50 rounded-full p-1" />
+                        編輯任務卡片
+                    </>
+                ) : (
+                    <>
+                        <Plus className="w-6 h-6 text-blue-600 bg-blue-50 rounded-full p-1" />
+                        新增任務卡片
+                    </>
+                )}
             </h3>
             
-            <form onSubmit={addCard} className="space-y-5">
-                {/* Type Selector */}
+            <form onSubmit={handleSaveCard} className="space-y-5">
+                {/* Type Selector (Only selectable when creating new) */}
                 <div>
                     <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">卡片類型</label>
                     <div className="grid grid-cols-4 gap-2">
@@ -822,8 +895,12 @@ export default function App() {
                             <button
                                 key={t.id}
                                 type="button"
-                                onClick={() => setNewCardType(t.id)}
-                                className={`flex flex-col items-center justify-center gap-1 py-3 px-1 rounded-xl border transition-all duration-200 ${newCardType === t.id ? `${t.border} ${t.bg} ${t.color} ring-1 ring-offset-1 ring-${t.color.split('-')[1]}-400 font-bold shadow-sm` : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+                                // Lock type selection when editing
+                                onClick={() => !editingCard && setNewCardType(t.id)}
+                                className={`flex flex-col items-center justify-center gap-1 py-3 px-1 rounded-xl border transition-all duration-200 
+                                    ${newCardType === t.id ? `${t.border} ${t.bg} ${t.color} ring-1 ring-offset-1 ring-${t.color.split('-')[1]}-400 font-bold shadow-sm` : 'border-slate-200 text-slate-500 hover:bg-slate-50'}
+                                    ${editingCard && newCardType !== t.id ? 'opacity-40 cursor-not-allowed' : ''}
+                                `}
                             >
                                 <t.icon className="w-5 h-5" />
                                 <span className="text-xs">{t.label}</span>
@@ -919,18 +996,25 @@ export default function App() {
                         <textarea 
                             value={cardForm.content}
                             onChange={e => {
-                                const items = e.target.value.split('\n').filter(i => i.trim()).map(text => ({ text, done: false }));
-                                setCardForm({...cardForm, content: e.target.value, todoItems: items});
+                                setCardForm({...cardForm, content: e.target.value});
                             }}
                             className="w-full border border-slate-300 rounded-lg px-3 py-2.5 h-40 focus:ring-2 ring-blue-500 outline-none transition-all font-mono text-sm"
                             placeholder="買牛奶&#10;去郵局&#10;倒垃圾"
                         />
+                         <p className="text-xs text-slate-500 mt-1">編輯模式下，修改文字不會影響未變動項目的勾選狀態。</p>
                     </div>
                 )}
 
               <div className="flex justify-end gap-3 pt-6 border-t border-slate-100">
-                <button type="button" onClick={() => setIsAddCardOpen(false)} className="px-5 py-2.5 text-slate-500 hover:bg-slate-100 rounded-lg transition-colors font-medium">取消</button>
-                <button type="submit" className="px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold shadow-lg shadow-blue-200 transition-all active:scale-95">建立卡片</button>
+                <button type="button" onClick={() => setIsCardModalOpen(false)} className="px-5 py-2.5 text-slate-500 hover:bg-slate-100 rounded-lg transition-colors font-medium">取消</button>
+                <button 
+                    type="submit" 
+                    className={`px-5 py-2.5 text-white rounded-lg shadow-lg transition-all active:scale-95 font-bold 
+                        ${editingCard ? 'bg-orange-600 hover:bg-orange-700 shadow-orange-200' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'}
+                    `}
+                >
+                    {editingCard ? '儲存變更' : '建立卡片'}
+                </button>
               </div>
             </form>
           </div>
